@@ -1,5 +1,5 @@
 import os
-# 1. Disable GPU for Render Free Tier (Required to avoid memory crashes)
+# 1. Disable GPU for Render Free Tier to avoid memory crashes
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3" 
 
@@ -10,10 +10,11 @@ from PIL import Image
 import tensorflow as tf
 
 app = Flask(__name__)
-# 2. Allow requests from your React Frontend
-CORS(app)
+# 2. EMERGENCY CORS FIX: Allow all origins to stop "Failed to fetch"
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 print("Loading TFLite model...")
+# Ensure model.tflite is in the same folder
 interpreter = tf.lite.Interpreter(model_path="model.tflite")
 interpreter.allocate_tensors()
 
@@ -27,8 +28,12 @@ def prepare_image(image):
     img_array = np.array(img, dtype=np.float32) 
     return np.expand_dims(img_array, axis=0)
 
-@app.route('/predict', methods=['POST'])
+@app.route('/predict', methods=['POST', 'OPTIONS'])
 def predict():
+    # Handle the browser's preflight check manually just in case
+    if request.method == 'OPTIONS':
+        return _build_cors_preflight_response()
+
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image uploaded'}), 400
@@ -45,16 +50,23 @@ def predict():
         prediction = float(interpreter.get_tensor(output_details[0]['index'])[0][0])
         
         is_authentic = bool(prediction > 0.5)
-        # Calculate percentage: if Fake, we show confidence in "Fakeness"
         confidence = float(prediction if is_authentic else 1 - prediction)
 
-        return jsonify({
+        response = jsonify({
             'is_authentic': is_authentic,
             'confidence_score': round(confidence * 100, 2),
             'result': 'REAL' if is_authentic else 'FAKE'
         })
+        return response
     except Exception as e:
         return jsonify({'error': f"Server Error: {str(e)}"}), 500
+
+def _build_cors_preflight_response():
+    response = make_response()
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add('Access-Control-Allow-Headers', "*")
+    response.headers.add('Access-Control-Allow-Methods', "*")
+    return response
 
 @app.route('/')
 def home():
